@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NetGuard — Network Intrusion Detection</title>
+<style>
+:root{--bg:#0b1020;--card:#131a2e;--line:#243052;--tx:#e6ebf7;--mut:#8b97b8;--ok:#34d399;--med:#fbbf24;--high:#fb923c;--crit:#f43f5e;--acc:#60a5fa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:19px;margin:0}h1 span{color:var(--acc)}.dot{width:10px;height:10px;border-radius:50%;background:var(--mut)}
+.dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.err{background:var(--crit)}
+#status{color:var(--mut);font-size:12px}.sp{flex:1}
+button{background:var(--card);color:var(--tx);border:1px solid var(--line);padding:7px 14px;border-radius:8px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}button.act{background:var(--acc);color:#04122b;border-color:var(--acc)}
+main{padding:20px 22px;max-width:1250px;margin:auto}.tabs{display:flex;gap:8px;margin-bottom:16px}
+.grid{display:grid;gap:14px}.stats{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card h3{margin:0 0 10px;font-size:13px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.big{font-size:28px;font-weight:700}.sub{color:var(--mut);font-size:12px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mut);font-size:12px;font-weight:600}tr.ev{cursor:pointer}tr.ev:hover{background:#18213b}
+.wrap{overflow-x:auto}.b{padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}
+.b.none{background:#0f3d2e;color:var(--ok)}.b.medium{background:#4a3a0a;color:var(--med)}.b.high{background:#4d2a0c;color:var(--high)}.b.critical{background:#5a1224;color:var(--crit)}
+.two{grid-template-columns:2fr 1fr}@media(max-width:900px){.two{grid-template-columns:1fr}}
+.bar{height:8px;background:#1d2745;border-radius:4px;overflow:hidden;min-width:80px}.bar>i{display:block;height:100%}
+.pos{background:var(--crit)}.neg{background:var(--ok)}.fx{display:grid;grid-template-columns:150px 1fr 70px;gap:8px;align-items:center;margin:6px 0}
+.note{border-left:3px solid var(--med);background:#221d0c;padding:10px 14px;border-radius:6px;margin-bottom:14px;color:#e8d9a0;font-size:13px}
+.cm{display:grid;gap:3px}.cm div{padding:9px 4px;text-align:center;border-radius:5px;font-size:12px}.cm .h{color:var(--mut);background:none}
+canvas{max-height:260px}.hide{display:none}
+</style></head><body>
+<header><h1>Net<span>Guard</span></h1><div class="dot" id="dot"></div><span id="status">connecting…</span><div class="sp"></div>
+<button id="pause">Pause</button></header>
+<main>
+<div class="tabs"><button class="act" data-t="live">Live Monitor</button><button data-t="perf">Model Performance</button></div>
+
+<section id="live">
+ <div class="note">Simulated live traffic: held-out rows from NSL-KDD <b>KDDTest+</b> are replayed through the model. This is a demo, not a real network tap.</div>
+ <div class="grid stats">
+  <div class="card"><h3>Processed</h3><div class="big" id="sProc">0</div></div>
+  <div class="card"><h3>Flagged (attacks)</h3><div class="big" id="sFlag">0</div><div class="sub" id="sFlagPct">–</div></div>
+  <div class="card"><h3>Live accuracy</h3><div class="big" id="sAcc">–</div><div class="sub">vs ground truth labels</div></div>
+  <div class="card"><h3>Missed attacks</h3><div class="big" id="sMiss" style="color:var(--crit)">0</div><div class="sub">attack predicted as Normal</div></div>
+ </div>
+ <div class="grid two">
+  <div class="card"><h3>Predicted category volume (per tick)</h3><canvas id="trend"></canvas><div class="sub" id="noChart"></div></div>
+  <div class="card" id="detail"><h3>Why was it flagged?</h3><div class="sub">Click an event in the table to see the top contributing features.</div></div>
+ </div>
+ <div class="card" style="margin-top:14px"><h3>Event feed (latest 25)</h3><div class="wrap"><table><thead><tr>
+  <th>#</th><th>Proto / Service</th><th>Predicted</th><th>Confidence</th><th>Severity</th><th>Ground truth</th><th></th></tr></thead><tbody id="rows"></tbody></table></div></div>
+</section>
+
+<section id="perf" class="hide">
+ <div class="note" id="perfNote"></div>
+ <div class="grid stats" id="perfStats"></div>
+ <div class="grid two"><div class="card"><h3>Per-class results (XGBoost)</h3><div class="wrap"><table><thead><tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th><th>Support</th></tr></thead><tbody id="pcRows"></tbody></table></div></div>
+ <div class="card"><h3>Top global features</h3><div id="gi"></div></div></div>
+ <div class="card" style="margin-top:14px"><h3>Confusion matrix (rows = actual, columns = predicted)</h3><div class="wrap"><div class="cm" id="cm"></div></div></div>
+</section>
+</main>
+<script src="chart.umd.js"></script>
+<script>
+const API = (window.NETGUARD_API || "") + "/api";
+const CATS = ["Normal","DoS","Probe","R2L","U2R"], COL = {Normal:"#34d399",DoS:"#fb923c",Probe:"#fbbf24",R2L:"#a78bfa",U2R:"#f43f5e"};
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = x => (x*100).toFixed(1) + "%";
+let paused = false, busy = false, fails = 0, events = [], S = {proc:0, flag:0, ok:0, miss:0}, ticks = [], chart = null;
+
+async function jget(path){ const r = await fetch(API + path); if(!r.ok) throw new Error(r.status); return r.json(); }
+function setStatus(kind, txt){ $("dot").className = "dot " + kind; $("status").textContent = txt; }
+
+function initChart(){
+  if (typeof Chart === "undefined"){ $("noChart").textContent = "Chart library could not be loaded (offline?). Table still works."; return; }
+  chart = new Chart($("trend"), {type:"line", data:{labels:[], datasets: CATS.map(c => ({label:c, data:[], borderColor:COL[c], backgroundColor:COL[c], tension:.3, pointRadius:0, borderWidth:2}))},
+    options:{animation:false, responsive:true, scales:{x:{display:false}, y:{beginAtZero:true, ticks:{precision:0, color:"#8b97b8"}, grid:{color:"#243052"}}}, plugins:{legend:{labels:{color:"#e6ebf7"}}}}});
+}
+function pushTick(batch){
+  const c = Object.fromEntries(CATS.map(k => [k,0])); batch.forEach(e => c[e.category]++);
+  ticks.push(c); if (ticks.length > 40) ticks.shift();
+  if (!chart) return;
+  chart.data.labels = ticks.map((_, i) => i);
+  chart.data.datasets.forEach(d => d.data = ticks.map(t => t[d.label]));
+  chart.update();
+}
+function render(){
+  $("sProc").textContent = S.proc; $("sFlag").textContent = S.flag; $("sFlagPct").textContent = S.proc ? pct(S.flag/S.proc) + " of traffic" : "–";
+  $("sAcc").textContent = S.proc ? pct(S.ok/S.proc) : "–"; $("sMiss").textContent = S.miss;
+  $("rows").innerHTML = events.map((e, i) => `<tr class="ev" data-i="${i}"><td>${e.id}</td><td>${esc(e.protocol)} / ${esc(e.service)}</td>
+   <td style="color:${COL[e.category]};font-weight:600">${esc(e.category)}</td><td>${pct(e.confidence)}</td>
+   <td><span class="b ${e.severity}">${esc(e.severity)}</span></td><td>${esc(e.true_label)} <span class="sub">(${esc(e.true_category)})</span></td>
+   <td>${e.category === e.true_category ? "✓" : '<span style="color:var(--crit)">✗</span>'}</td></tr>`).join("");
+}
+function showDetail(e){
+  const max = Math.max(...e.top_features.map(f => Math.abs(f.impact)), 1e-9);
+  $("detail").innerHTML = `<h3>Why was it flagged?</h3><div style="margin-bottom:8px"><b style="color:${COL[e.category]}">${esc(e.category)}</b>
+   <span class="sub"> · ${pct(e.confidence)} confidence · true: ${esc(e.true_label)}</span></div>` +
+   e.top_features.map(f => `<div class="fx"><span title="value: ${esc(f.value)}">${esc(f.feature)} <span class="sub">= ${esc(f.value)}</span></span>
+    <div class="bar"><i class="${f.impact >= 0 ? "pos" : "neg"}" style="width:${Math.abs(f.impact)/max*100}%"></i></div><span>${f.impact > 0 ? "+" : ""}${f.impact.toFixed(2)}</span></div>`).join("") +
+   `<div class="sub" style="margin-top:8px">Red pushes toward the predicted class, green pushes against it (SHAP-style contributions from XGBoost).</div>`;
+}
+async function tick(){
+  if (paused || busy) return; busy = true;
+  try{
+    const batch = await jget("/replay?n=3");
+    fails = 0; setStatus("on", "live · model online");
+    batch.forEach(e => { S.proc++; if (e.category !== "Normal") S.flag++; if (e.category === e.true_category) S.ok++; if (e.category === "Normal" && e.true_category !== "Normal") S.miss++; });
+    events = batch.reverse().concat(events).slice(0, 25); pushTick(batch); render();
+  } catch(err){ fails++; setStatus("err", fails > 1 ? "backend unreachable — retrying…" : "backend waking up…"); }
+  finally{ busy = false; }
+}
+async function loadPerf(){
+  try{
+    const m = await jget("/metrics"); const x = m.xgboost, r = m.random_forest;
+    $("perfNote").innerHTML = `${esc(m.note)} Trained on ${m.train_rows.toLocaleString()} rows, tested on ${m.test_rows.toLocaleString()}. Accuracy alone is misleading here: look at per-class <b>recall</b> — rare attack classes (R2L, U2R) are still mostly missed.`;
+    $("perfStats").innerHTML = [["XGBoost accuracy", pct(x.accuracy)],["XGBoost macro-F1", x.macro_f1.toFixed(3)],["Random Forest accuracy", pct(r.accuracy)],["Random Forest macro-F1", r.macro_f1.toFixed(3)]]
+      .map(([a,b]) => `<div class="card"><h3>${a}</h3><div class="big">${b}</div></div>`).join("");
+    $("pcRows").innerHTML = x.classes.map(c => { const p = x.per_class[c]; return `<tr><td style="color:${COL[c]};font-weight:600">${c}</td><td>${pct(p.precision)}</td>
+      <td><div style="display:flex;gap:8px;align-items:center">${pct(p.recall)}<div class="bar"><i style="width:${p.recall*100}%;background:${p.recall<.5?"var(--crit)":"var(--ok)"}"></i></div></div></td><td>${p["f1-score"].toFixed(2)}</td><td>${p.support}</td></tr>`; }).join("");
+    const g = Object.entries(m.global_importance), gm = g[0][1];
+    $("gi").innerHTML = g.slice(0, 10).map(([k,v]) => `<div class="fx" style="grid-template-columns:150px 1fr 50px"><span>${esc(k)}</span><div class="bar"><i style="width:${v/gm*100}%;background:var(--acc)"></i></div><span>${v.toFixed(3)}</span></div>`).join("");
+    const cm = x.confusion_matrix, n = x.classes.length; $("cm").style.gridTemplateColumns = `90px repeat(${n}, 1fr)`;
+    let h = '<div class="h"></div>' + x.classes.map(c => `<div class="h">${c}</div>`).join("");
+    cm.forEach((row, i) => { const tot = row.reduce((a,b) => a+b, 0) || 1; h += `<div class="h" style="text-align:right">${x.classes[i]}</div>` +
+      row.map((v, j) => `<div style="background:${i===j?`rgba(52,211,153,${.15+.7*v/tot})`:`rgba(244,63,94,${Math.min(.8, v/tot*2)})`}">${v}</div>`).join(""); });
+    $("cm").innerHTML = h;
+  } catch(e){ $("perfNote").textContent = "Could not load metrics from the backend."; }
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("act", x === b));
+  $("live").classList.toggle("hide", b.dataset.t !== "live"); $("perf").classList.toggle("hide", b.dataset.t !== "perf");
+  if (b.dataset.t === "perf") loadPerf();
+});
+$("pause").onclick = () => { paused = !paused; $("pause").textContent = paused ? "Resume" : "Pause"; if (paused) setStatus("", "paused"); };
+$("rows").onclick = ev => { const tr = ev.target.closest("tr.ev"); if (tr) showDetail(events[+tr.dataset.i]); };
+initChart(); tick(); setInterval(tick, 1500);
+</script></body></html>
